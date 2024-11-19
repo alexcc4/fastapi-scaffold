@@ -44,9 +44,6 @@ async def run_migrations_online() -> None:
 
 
 def run_migrations_offline() -> None:
-    """在 'offline' 模式运行迁移
-
-    """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,

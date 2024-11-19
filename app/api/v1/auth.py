@@ -31,7 +31,7 @@ async def login_or_register(
     email = clerk_data["email_addresses"][0]["email_address"]
     name = f"{clerk_data['first_name']} {clerk_data['last_name']}"
 
-    query = select(User).where(User.clerk_id == clerk_id)
+    query = select(User).where(User.email == email)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     

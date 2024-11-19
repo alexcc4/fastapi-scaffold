@@ -46,7 +46,7 @@ async def db_echo(
     
     # Get redis value
     redis_value = await redis.get("test")
-    
+
     return {
         "user_count": user_count or 0,
         "redis_value": redis_value

@@ -51,13 +51,32 @@ A minimalist yet production-ready FastAPI backend service with SQLAlchemy and Re
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## Authentication
+## Debug Authentication(Optional)
 
 This service uses Clerk for authentication. Frontend applications need to:
 
 1. Implement Clerk authentication flow
 2. Pass the Clerk session token in Authorization header
 3. Handle 401/403 responses appropriately
+
+### Requirements
+
+- Clerk account
+
+### Frontend
+- cd frontend
+- install node.js
+- install dependencies: `npm install`
+- `cp .env.example .env`: set the clerk publishable key and secret
+- run frontend: `npm run dev`
+- open `http://localhost:3000` in browser: get the session_id
+
+### Backend
+- set the CLERK_SECRET_KEY in .env
+
+### Last Step
+- use the session_id to get the user info: `curl -X GET "http://localhost:8000/api/v1/auth/login" -H "Authorization: Bearer {session_id}"`
+
 
 ## References
 

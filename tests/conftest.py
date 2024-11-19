@@ -170,7 +170,7 @@ def fake_user() -> Callable[[dict | None], dict]:
         if clerk_data:
             return {
                 "clerk_id": clerk_data["id"],
-                "email": clerk_data["email_addresses"][0]["email"],
+                "email": clerk_data["email_addresses"][0]["email_address"],
                 "name": f"{clerk_data['first_name']} {clerk_data['last_name']}"
             }
         return {
@@ -191,7 +191,7 @@ def fake_clerk() -> dict:
         "last_name": fake.last_name(),
         "email_addresses": [
             {
-                "email": fake.email(),
+                "email_address": fake.email(),
             }
         ]
     }

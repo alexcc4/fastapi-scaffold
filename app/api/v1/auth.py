@@ -28,7 +28,7 @@ async def login_or_register(
     clerk_data = await verify_clerk_token(credentials)
     
     clerk_id = clerk_data["id"]
-    email = clerk_data["email_addresses"][0]["email"]
+    email = clerk_data["email_addresses"][0]["email_address"]
     name = f"{clerk_data['first_name']} {clerk_data['last_name']}"
 
     query = select(User).where(User.clerk_id == clerk_id)

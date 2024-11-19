@@ -23,24 +23,41 @@ async def verify_clerk_token(
     if not credentials:
         raise AuthenticationError("No credentials provided")
     
-    token = credentials.credentials
-    if not token:
-        raise AuthenticationError("Invalid token format")
+    session_id = credentials.credentials
+    if not session_id:
+        raise AuthenticationError("Invalid session_id")
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{settings.CLERK_API_URL}/users/me",
+            session_response = await client.get(
+                f"{settings.CLERK_API_URL}/sessions/{session_id}",
                 headers={
-                    "Authorization": f"Bearer {token}",
+                    "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
+                    "Content-Type": "application/json"
+                }
+            )
+            if session_response.status_code != 200:
+                raise AuthenticationError("Invalid session")
+
+            session_data = session_response.json()
+            if session_data.get("status") != "active":
+                raise AuthenticationError("Session is not active")
+
+            user_id = session_data.get("user_id")
+
+            user_response = await client.get(
+                f"{settings.CLERK_API_URL}/users/{user_id}",
+                headers={
+                    "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
                     "Content-Type": "application/json"
                 }
             )
             
-            if response.status_code != 200:
-                raise AuthenticationError("Invalid token")
+            if user_response.status_code != 200:
+                raise AuthenticationError("Failed to fetch user info")
+
+            return user_response.json()
             
-            return response.json()
     except httpx.RequestError:
         raise AuthenticationError("Failed to verify token")
 
@@ -50,8 +67,8 @@ async def get_current_user(
     redis: Redis = Depends(get_redis),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    token = credentials.credentials
-    redis_key = get_token_key(token)
+    session_id = credentials.credentials
+    redis_key = get_token_key(session_id)
     
     user_id = await redis.get(redis_key)
     if user_id:
@@ -61,4 +78,4 @@ async def get_current_user(
         if user:
             return user
     
-    raise AuthenticationError("Invalid or expired token")
+    raise AuthenticationError("Invalid session_id")

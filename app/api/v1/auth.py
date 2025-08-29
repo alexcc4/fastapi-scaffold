@@ -1,71 +1,77 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from app.db.session import get_db
-from app.db.redis import get_redis, get_token_key
-from app.models.user import User
+from app.db.redis import get_redis
+from app.models.user import User as DBUser
+from app.schemas.auth import LoginRequest, LoginResponse
+from app.core.auth import authenticate_user, logout_user, oauth2_scheme
+from app.core.deps import get_current_user
 from app.schemas.user import UserResponse
-from app.core.deps import verify_clerk_token
-from app.core.config import settings
 
 
 router = APIRouter()
-security = HTTPBearer()
 
 
-@router.post("/login", response_model=UserResponse)
-async def login_or_register(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+@router.post("/token")
+async def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
-    redis: Annotated[Redis, Depends(get_redis)],
-    response: Response = None
-):
-    clerk_data = await verify_clerk_token(credentials)
-    
-    clerk_id = clerk_data["id"]
-    email = clerk_data["email_addresses"][0]["email_address"]
-    name = f"{clerk_data['first_name']} {clerk_data['last_name']}"
-
-    query = select(User).where(User.email == email)
-    result = await db.execute(query)
-    user = result.scalar_one_or_none()
-    
-    is_new_user = False
-    if not user:
-        user = User(
-            clerk_id=clerk_id,
-            email=email,
-            name=name,
-            status=1
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        is_new_user = True
-    
-    redis_key = get_token_key(credentials.credentials)
-    await redis.set(
-        redis_key,
-        str(user.id),
-        ex=60 * 60 * 24 * settings.TOKEN_EXPIRE_DAYS
-    )
-    
-    if response:
-        response.status_code = 201 if is_new_user else 200
-    
-    return user
-
-
-@router.post("/logout")
-async def logout(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
     redis: Annotated[Redis, Depends(get_redis)]
 ):
-    redis_key = get_token_key(credentials.credentials)
-    await redis.delete(redis_key)
+    """standard OAuth2 token endpoint - only support internal account password login"""
+    
+    # OAuth2 standard endpoint only supports internal account password login
+    auth_type = 1
+    
+    
+    _, token = await authenticate_user(
+            auth_id=form_data.username,
+            auth_type=auth_type,
+            db=db,
+            redis=redis,
+            credential=form_data.password
+        )
+        
+    return {
+            "access_token": token,  
+            "token_type": "bearer"
+    }
+        
+    
+@router.post("/login", response_model=LoginResponse)
+async def login(
+    params: LoginRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)],
+):
+    user, token = await authenticate_user(
+        auth_id=params.auth_id,
+        auth_type=params.auth_type,
+        db=db,
+        redis=redis,
+        credential=params.credential
+    )
+    
+    return LoginResponse(
+        access_token=token,
+        user=user
+    )
+    
+@router.post("/logout")
+async def logout(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    current_user: Annotated[DBUser, Depends(get_current_user)],
+    redis: Annotated[Redis, Depends(get_redis)]
+):
+    await logout_user(token, redis)
     return {"message": "Logged out successfully"}
+
+
+@router.get("/me", response_model=UserResponse)  
+async def read_users_me(current_user: Annotated[DBUser, Depends(get_current_user)]):
+    return current_user

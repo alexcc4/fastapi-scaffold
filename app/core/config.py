@@ -1,32 +1,26 @@
-import os 
-from typing import Any, Optional
+import os
+from typing import Optional 
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Database settings
     DB_USER: str
     DB_PASSWORD: str
     DB_HOST: str
     DB_PORT: int
     DB_NAME: str
     
-    # Redis settings
-    REDIS_HOST: str
-    REDIS_PORT: int
-    REDIS_DB: int
-    REDIS_POOL_SIZE: int = 10
-    REDIS_POOL_TIMEOUT: int = 5
+    DEBUG: Optional[bool] = True
+    SECRET_KEY: str = "your_secret_key"
     
-    # App settings
-    DEBUG: Optional[bool] = False
-    SECRET_KEY: str
-    TOKEN_EXPIRE_DAYS: Optional[int] = 30
+    REDIS_HOST: Optional[str] = None
+    REDIS_PORT: Optional[int] = None
+    REDIS_DB: Optional[int] = None
 
-    API_V1_STR: str = "/api/v1"
-    CLERK_API_URL: str = "https://api.clerk.dev/v1"
-    CLERK_SECRET_KEY: Optional[str] = None
+    JWT_SECRET_KEY: str = "your_secret_key"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_DAYS: int = 30  
 
     @property
     def DATABASE_URL(self) -> str:
@@ -36,14 +30,13 @@ class Settings(BaseSettings):
 
     @property
     def REDIS_URL(self) -> str:
-        if os.getenv("TESTING"):
-            return "redis://localhost:6379/9"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     model_config = SettingsConfigDict(
         env_file=f".env.{os.getenv('APP_ENV', 'local')}",
-        case_sensitive=True
+        case_sensitive=True,
+        extra='ignore'
     )
 
 
-settings = Settings()
+settings = Settings() 

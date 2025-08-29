@@ -1,9 +1,9 @@
-import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
-from httpx import AsyncClient
+
 from app.models.user import User
+from tests.conftest import create_test_user
 
 
 async def test_mysql_basic(db: AsyncSession):
@@ -13,9 +13,9 @@ async def test_mysql_basic(db: AsyncSession):
     assert row == 1
 
 
-async def test_mysql_orm_insert_and_query(db: AsyncSession, test_user: User):
+async def test_mysql_orm_insert_and_query(db: AsyncSession):
     """Test ORM insert and query operations."""
-    # 查询用户
+    test_user, _ = await create_test_user(db)
     result = await db.get(User, test_user.id)
     assert result is not None
 

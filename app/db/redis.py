@@ -1,6 +1,7 @@
 from typing import AsyncGenerator
 
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import Redis, ConnectionPool
+from fastapi import Depends
 
 from app.core.config import settings
 
@@ -18,8 +19,8 @@ async def get_redis() -> AsyncGenerator[Redis, None]:
     try:
         yield client
     finally:
-        await client.close()
+        await client.aclose() 
 
 
-def get_token_key(token: str) -> str:
-    return f"clerk_token:{token}"
+async def get_redis_client(redis: Redis = Depends(get_redis)) -> Redis:
+    return redis

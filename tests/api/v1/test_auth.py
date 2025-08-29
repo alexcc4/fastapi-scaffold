@@ -1,109 +1,135 @@
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
-from app.db.redis import get_token_key
-from app.models.user import User
+from tests.conftest import create_test_user, login_test_user
 
 
-async def test_register_new_user(
-    client: AsyncClient,
-    db: AsyncSession,
-    redis_conn: Redis,
-    fake_clerk: dict,
-    mock_clerk_success,
-    auth_headers,
-):
+async def test_oauth2_token_login(client: AsyncClient, db: AsyncSession):
+    user, auth_user = await create_test_user(db, auth_id="testuser", password="test123")
+    
     response = await client.post(
-        "/api/v1/auth/login",
-        headers=auth_headers
+        "/api/v1/auth/token",
+        data={"username": "testuser", "password": "test123"}
     )
-
-    assert response.status_code == 201
-    data = response.json()
-    assert data["clerk_id"] == fake_clerk["id"]
-
-    user = await db.get(User, data['id'])
-    assert user is not None
-    assert user.clerk_id == fake_clerk["id"]
-
-    user_key = get_token_key(auth_headers['Authorization'].split(' ')[-1])
-    record = await redis_conn.get(user_key)
-    assert record == str(data['id'])
-
-
-async def test_login_existing_user(
-    client: AsyncClient,
-    db: AsyncSession,
-    redis_conn: Redis,
-    fake_user,
-    fake_clerk,
-    mock_clerk_success
-):
-
-    user_created = User(**fake_user(fake_clerk))
-    db.add(user_created)
-    await db.commit()
-    await db.refresh(user_created)
-
-    response = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "clerk_id": user_created.clerk_id,
-            "email": user_created.email,
-            "name": user_created.name
-        },
-        headers= {"Authorization": f"Bearer {user_created.clerk_id}"}
-    )
-
+    
     assert response.status_code == 200
     data = response.json()
-    assert data["clerk_id"] == user_created.clerk_id
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+    assert data["access_token"] != ""
 
-async def test_invalid_clerk_token(
-    client: AsyncClient,
-    db: AsyncSession,
-    redis_conn: Redis,
-    mock_clerk_failure,
-    auth_headers
-):
+
+async def test_oauth2_token_login_invalid_credentials(client: AsyncClient, db: AsyncSession):
+    await create_test_user(db, auth_id="testuser", password="test123")
+    
     response = await client.post(
-        "/api/v1/auth/login",
-        headers=auth_headers
+        "/api/v1/auth/token",
+        data={"username": "testuser", "password": "wrongpassword"}
     )
-
+    
     assert response.status_code == 401
-    assert "Invalid token" in response.json()["detail"]
 
-async def test_logout(
-    client: AsyncClient,
-    db: AsyncSession,
-    redis_conn: Redis,
-    fake_user,
-    fake_clerk,
-    mock_clerk_success
-):
-    user_created = User(**fake_user(fake_clerk))
-    db.add(user_created)
-    await db.commit()
-    await db.refresh(user_created)
 
+async def test_custom_login(client: AsyncClient, db: AsyncSession):
+    user, auth_user = await create_test_user(db, auth_id="testuser", password="test123")
+    
     response = await client.post(
         "/api/v1/auth/login",
         json={
-            "clerk_id": user_created.clerk_id,
-            "email": user_created.email,
-            "name": user_created.name
-        },
-        headers= {"Authorization": f"Bearer {user_created.clerk_id}"}
+            "auth_id": "testuser",
+            "auth_type": 1,
+            "credential": "test123"
+        }
     )
-
+    
     assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert "user" in data
+    assert data["user"]["id"] == user.id
+    assert data["user"]["name"] == "testuser"
 
+
+async def test_custom_login_invalid_credentials(client: AsyncClient, db: AsyncSession):
+    await create_test_user(db, auth_id="testuser", password="test123")
+    
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "auth_id": "testuser", 
+            "auth_type": 1,
+            "credential": "wrongpassword"
+        }
+    )
+    
+    assert response.status_code == 401
+
+
+async def test_get_current_user_me(client: AsyncClient, db: AsyncSession):
+    user, auth_user = await create_test_user(db, auth_id="testuser", password="test123")
+    token = await login_test_user(client, auth_id="testuser", password="test123")
+    
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == user.id
+    assert data["name"] == "testuser"
+    assert data["status"] == 1
+    assert "created_at" in data
+
+
+async def test_get_current_user_without_token(client: AsyncClient):
+    response = await client.get("/api/v1/auth/me")
+    assert response.status_code == 401
+
+
+async def test_get_current_user_with_invalid_token(client: AsyncClient):
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": "Bearer invalid_token"}
+    )
+    assert response.status_code == 401
+
+
+async def test_logout(client: AsyncClient, db: AsyncSession, redis_client: Redis):
+    user, auth_user = await create_test_user(db, auth_id="testuser", password="test123")
+    token = await login_test_user(client, auth_id="testuser", password="test123")
+    
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    
     response = await client.post(
         "/api/v1/auth/logout",
-        headers= {"Authorization": f"Bearer {user_created.clerk_id}"}
+        headers={"Authorization": f"Bearer {token}"}
     )
-
     assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "Logged out successfully"
+    
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 401
+
+
+async def test_logout_without_token(client: AsyncClient):
+    response = await client.post("/api/v1/auth/logout")
+    assert response.status_code == 401
+
+
+async def test_logout_with_invalid_token(client: AsyncClient):
+    """test logout with invalid token"""
+    response = await client.post(
+        "/api/v1/auth/logout", 
+        headers={"Authorization": "Bearer invalid_token"}
+    )
+    assert response.status_code == 401

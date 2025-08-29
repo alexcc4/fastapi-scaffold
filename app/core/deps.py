@@ -1,81 +1,83 @@
-from typing import Annotated, AsyncGenerator
+from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException
+from jose import JWTError, jwt, ExpiredSignatureError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from redis.asyncio import Redis
-import httpx
+from sqlalchemy import select
 
 from app.db.session import get_db
-from app.db.redis import get_redis, get_token_key
-from app.models.user import User
-from app.core.exceptions import AuthenticationError
-from app.core.config import settings
-
-
-security = HTTPBearer()
-
-
-async def verify_clerk_token(
-    credentials: HTTPAuthorizationCredentials,
-) -> dict:
-    if not credentials:
-        raise AuthenticationError("No credentials provided")
-    
-    session_id = credentials.credentials
-    if not session_id:
-        raise AuthenticationError("Invalid session_id")
-
-    try:
-        async with httpx.AsyncClient() as client:
-            session_response = await client.get(
-                f"{settings.CLERK_API_URL}/sessions/{session_id}",
-                headers={
-                    "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
-                    "Content-Type": "application/json"
-                }
-            )
-            if session_response.status_code != 200:
-                raise AuthenticationError("Invalid session")
-
-            session_data = session_response.json()
-            if session_data.get("status") != "active":
-                raise AuthenticationError("Session is not active")
-
-            user_id = session_data.get("user_id")
-
-            user_response = await client.get(
-                f"{settings.CLERK_API_URL}/users/{user_id}",
-                headers={
-                    "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
-                    "Content-Type": "application/json"
-                }
-            )
-            
-            if user_response.status_code != 200:
-                raise AuthenticationError("Failed to fetch user info")
-
-            return user_response.json()
-            
-    except httpx.RequestError:
-        raise AuthenticationError("Failed to verify token")
+from app.db.redis import get_redis
+from app.models.user import User as DBUser, AuthUser
+from app.core.auth import oauth2_scheme, SECRET_KEY, ALGORITHM, validate_token_in_redis, revoke_token
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    redis: Redis = Depends(get_redis),
-    db: AsyncSession = Depends(get_db)
-) -> User:
-    session_id = credentials.credentials
-    redis_key = get_token_key(session_id)
+    token: Annotated[str, Depends(oauth2_scheme)], 
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis: Annotated[Redis, Depends(get_redis)]
+) -> DBUser:
+    """get current user - JWT + Redis double verification"""
     
-    user_id = await redis.get(redis_key)
-    if user_id:
-        query = select(User).where(User.id == int(user_id))
-        result = await db.execute(query)
-        user = result.scalar_one_or_none()
-        if user:
-            return user
-    
-    raise AuthenticationError("Invalid session_id")
+    try:
+        # 1. verify JWT format and signature
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_from_jwt = payload.get("user_id")
+        if user_id_from_jwt is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid token payload",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # 2. verify redis token
+        user_id_from_redis = await validate_token_in_redis(token, redis)
+        if user_id_from_redis is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Token expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # 3. ensure JWT and redis user_id match
+        if user_id_from_jwt != user_id_from_redis:
+            raise HTTPException(
+                status_code=401,
+                detail="Token user_id mismatch",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # 4. query auth user
+        auth_result = await db.execute(
+            select(AuthUser).where(AuthUser.user_id == user_id_from_redis)
+        )
+        auth_user = auth_result.scalar_one_or_none()
+        
+        if not auth_user:
+            raise HTTPException(
+                status_code=404,
+                detail="User not found in database",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        user = await db.scalar(
+            select(DBUser).where(
+                DBUser.id == auth_user.user_id,
+                DBUser.deleted_at.is_(None)
+            )
+        )
+        
+        return user
+
+    except ExpiredSignatureError:
+        raise HTTPException(
+            status_code=401,
+            detail="Token expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except JWTError as e:
+        raise HTTPException(
+            status_code=401,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )

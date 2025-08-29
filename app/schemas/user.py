@@ -1,19 +1,20 @@
 from datetime import datetime
+from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel
 
 
 class UserResponse(BaseModel):
     id: int
-    clerk_id: str
-    email: str
     name: str
+    avatar_url: Optional[str] = None
     status: int
+    is_verified: int
     created_at: datetime
 
     model_config = {
         "from_attributes": True,
         "json_encoders": {
-            datetime: lambda v: v.strftime("%Y-%m-%d %H:%M:%S") if v else None
+            datetime: lambda v: v.isoformat() if v else None
         }
     }

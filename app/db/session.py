@@ -12,6 +12,7 @@ For more information:
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession 
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from app.core.config import settings
 
@@ -19,9 +20,23 @@ from app.core.config import settings
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=True,
-    future=True
+    echo=False,
+    future=True,
+    poolclass=AsyncAdaptedQueuePool,
+    pool_pre_ping=True,  
+    pool_recycle=3600,      
+    pool_size=100,
+    max_overflow=100,
+    pool_timeout=60,
+    connect_args={
+        "connect_timeout": 600
+    }
 )
+
+async def close_db_engine():
+    """关闭数据库引擎"""
+    await engine.dispose()
+
 
 # Approach 1: Basic async session factory (currently used)
 AsyncSessionLocal = sessionmaker(

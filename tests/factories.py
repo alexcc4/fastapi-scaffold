@@ -1,43 +1,31 @@
-import random
-
 import factory
-from factory.alchemy import SQLAlchemyModelFactory
 
-from app.models.base import get_utc_now
-from app.models.user import User, AuthUser
-from app.core.auth import pwd_context
+from app.models import AuthUser, User
+from app.models.base import get_local_now
+from app.services.auth import DUMMY_CREDENTIAL
 
 
-class BaseFactory(SQLAlchemyModelFactory):
+class BaseModelFactory(factory.Factory):
     class Meta:
         abstract = True
-        sqlalchemy_session_persistence = None 
-    
-    id = factory.Sequence(lambda n: n + 1)
-    created_at = factory.LazyFunction(lambda: get_utc_now())
-    updated_at = factory.LazyFunction(lambda: get_utc_now())
+
+    created_at = factory.LazyFunction(get_local_now)
+    updated_at = factory.LazyFunction(get_local_now)
 
 
-class UserFactory(BaseFactory):
+class UserFactory(BaseModelFactory):
     class Meta:
         model = User
-        sqlalchemy_session = None
 
-    name = factory.Faker('user_name')
-    avatar_url = factory.Faker('image_url')
-    status = 1
-    is_verified = 1
-    deleted_at = None
+    name = factory.Faker("name")
+    disabled_at = None
+    session_version = 1
 
 
-class AuthUserFactory(BaseFactory):
+class AuthUserFactory(BaseModelFactory):
     class Meta:
         model = AuthUser
-        sqlalchemy_session = None
 
-    user_id = factory.LazyFunction(lambda: random.randint(1, 20000))
-    auth_id = factory.Faker('user_name')
-    auth_type = 1 
-    credential = factory.LazyFunction(lambda: pwd_context.hash("test123"))
-    auth_data = None
-    last_login_at = factory.LazyFunction(lambda: get_utc_now())
+    user_id = 1
+    auth_id = factory.Sequence(lambda number: f"internal.user{number}")
+    credential = DUMMY_CREDENTIAL

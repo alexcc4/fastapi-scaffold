@@ -1,52 +1,50 @@
-import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp
 
+from app.api import api_router
+from app.core.config import get_settings
 from app.core.logging import setup_logging
-from app.core.config import settings
-from app.middleware.timing import TimingMiddleware
-from app.api.v1 import api_router
-from app.db.session import close_db_engine
-from app.db.redis import pool
+from app.db.mysql import close_database
+from app.db.redis import close_redis
+from app.middlewares import RequestObservabilityMiddleware
+
+
+class ScaffoldFastAPI(FastAPI):
+    def build_middleware_stack(self) -> ASGIApp:
+        return RequestObservabilityMiddleware(
+            super().build_middleware_stack()
+        )
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("🚀 Application starting...")
-    
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
-    
-    logger.info("🛑 Application closing...")
-    await close_db_engine()
-    if pool:
-        await pool.aclose()
-    logger.info("✅ Resources cleaned up")
+    await close_redis()
+    await close_database()
 
 
-logger = setup_logging(logging.DEBUG if settings.DEBUG else logging.INFO)
-
-app = FastAPI(
-    title="FastAPI Backend Template",
-    version="0.1.0",
-    openapi_url=f"/openapi.json",
-    lifespan=lifespan,  
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.add_middleware(TimingMiddleware)
-
-app.include_router(api_router)
+def create_app() -> FastAPI:
+    settings = get_settings()
+    setup_logging(settings.LOG_LEVEL)
+    app = ScaffoldFastAPI(
+        title="FastAPI Scaffold",
+        debug=settings.DEBUG,
+        lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID", "Server-Timing"],
+    )
+    app.include_router(api_router)
+    return app
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+app = create_app()

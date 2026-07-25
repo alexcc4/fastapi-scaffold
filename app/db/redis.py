@@ -1,26 +1,33 @@
-from typing import AsyncGenerator
+from collections.abc import AsyncIterator
 
-from redis.asyncio import Redis, ConnectionPool
-from fastapi import Depends
+from redis.asyncio import ConnectionPool, Redis
 
-from app.core.config import settings
+from app.core.config import get_settings
 
 
-pool = ConnectionPool.from_url(
-    settings.REDIS_URL,
+settings = get_settings()
+
+redis_pool = ConnectionPool(
+    host=settings.REDIS_HOST,
+    port=settings.REDIS_PORT,
+    password=settings.REDIS_PASSWORD.get_secret_value() or None,
+    db=settings.REDIS_DB,
     decode_responses=True,
     encoding="utf-8",
-    max_connections=10
 )
 
 
-async def get_redis() -> AsyncGenerator[Redis, None]:
-    client = Redis(connection_pool=pool)
+def create_redis_client() -> Redis:
+    return Redis(connection_pool=redis_pool)
+
+
+async def get_redis() -> AsyncIterator[Redis]:
+    client = create_redis_client()
     try:
         yield client
     finally:
-        await client.aclose() 
+        await client.aclose()
 
 
-async def get_redis_client(redis: Redis = Depends(get_redis)) -> Redis:
-    return redis
+async def close_redis() -> None:
+    await redis_pool.aclose()

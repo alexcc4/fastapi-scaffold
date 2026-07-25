@@ -1,46 +1,19 @@
-# Python
+.DS_Store
+.env
+.env.*
+!.env.example
+!.env.test.example
+.venv/
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-.env
-.venv/
-venv/
-ENV/
-.python-version
+.pytest_cache/
 
-# IDE
+skills-lock.json
+.claude/
+.codex/
+.agent/
+.cursor/
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# Test
-.pytest_cache/
-.coverage
-htmlcov/
-coverage.xml
-
-# Database
-*.db
-*.sqlite3
-
-# Logs
-*.log
-logs/
-
-# Alembic
-migrations/versions/*
-!migrations/versions/.gitkeep
-
-# Environment
-.env*
-!.env.example
-
-# Distribution
-dist/
-build/
-*.egg-info/
-
-.cursor

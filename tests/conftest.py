@@ -1,196 +1,228 @@
-import os   
-import sys
-import logging
-from typing import AsyncGenerator
+import os
+from collections.abc import AsyncIterator
 
-# hide warnings
-logging.getLogger('factory').setLevel(logging.WARNING)
-logging.getLogger('factory.generate').setLevel(logging.WARNING)
-logging.getLogger('factory.generate.declarations').setLevel(logging.WARNING)
-logging.getLogger('faker').setLevel(logging.WARNING)
-logging.getLogger('faker.factory').setLevel(logging.WARNING)
-logging.getLogger('asyncio').setLevel(logging.WARNING)
-logging.getLogger('aiomysql').setLevel(logging.WARNING)
-logging.getLogger('python_multipart').setLevel(logging.WARNING)
-logging.getLogger('python_multipart.multipart').setLevel(logging.WARNING)
-logging.getLogger('httpx').setLevel(logging.WARNING)
+os.environ["APP_ENV"] = "test"
 
-# add project root to python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-os.environ["TESTING"] = "1"
-
-import asyncio
+import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker, AsyncEngine
+from alembic import command
+from alembic.config import Config
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from redis.asyncio import Redis
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
-from httpx import AsyncClient, ASGITransport
-from redis.asyncio import Redis 
-from contextlib import asynccontextmanager
 
-from app.main import app
-from app.core.config import settings
-from app.models.base import Base
-from app.models.user import User, AuthUser
-from app.db.session import get_db
-from app.db.redis import get_redis, pool 
-from app.core.auth import pwd_context
-from tests.factories import UserFactory, AuthUserFactory 
+from app.core.config import Settings, get_settings
+from app.db.mysql import close_database, get_db
+from app.db.redis import close_redis, get_redis
+from app.main import app, create_app
+from app.models import AuthUser, User
+from app.services.auth import create_internal_user
 
 
-@pytest_asyncio.fixture(scope="session")
-async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
-    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    await engine.dispose()
+TEST_USERNAME = "scaffold.admin"
+TEST_PASSWORD = "test-password-123"
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    async_session = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-    
-    async with async_session() as session:
-        async with session.begin():
-            for table in reversed(Base.metadata.sorted_tables):
-                await session.execute(table.delete())
-    
-    async with async_session() as session:
-        try:
-            from tests.factories import BaseFactory
-            BaseFactory._meta.sqlalchemy_session = session
-
-            yield session
-        finally:
-            try:
-                await session.rollback()
-            except Exception:
-                pass
-            finally:
-                await session.close()
+@pytest.fixture(scope="session")
+def test_settings() -> Settings:
+    settings = get_settings()
+    if settings.APP_ENV != "test":
+        pytest.exit("APP_ENV must be test before running pytest")
+    return settings
 
 
-@asynccontextmanager
-async def get_test_redis():
-    client = Redis(
-        host=settings.REDIS_HOST,
-        port=settings.REDIS_PORT,
-        db=settings.REDIS_DB,
-        decode_responses=True,
-        encoding='utf-8'
-    )
-    try:
-        yield client
-    finally:
-        try:
-            await client.aclose()
-            await asyncio.sleep(0.01) 
-        except Exception:
-            pass
+@pytest.fixture(scope="session")
+def safe_integration_settings(test_settings: Settings) -> Settings:
+    if not test_settings.DB_NAME.startswith("test_"):
+        pytest.exit("integration tests require DB_NAME to start with test_")
+    if test_settings.REDIS_DB == 0:
+        pytest.exit("integration tests require a disposable non-zero REDIS_DB")
+    return test_settings
 
 
-@pytest_asyncio.fixture(scope="function")
-async def redis_client() -> AsyncGenerator[Redis, None]:
-    async with get_test_redis() as client:
-        yield client
+@pytest.fixture(scope="session")
+def migrated_database(
+    safe_integration_settings: Settings,
+) -> None:
+    command.downgrade(Config("alembic.ini"), "base")
+    command.upgrade(Config("alembic.ini"), "head")
 
 
 @pytest_asyncio.fixture
-async def redis_conn():
-    redis_client = Redis(connection_pool=pool)
-    try:
-        yield redis_client
-    finally:
-        try:
-            await redis_client.aclose() 
-        except Exception:
-            pass
-
-
-
-@pytest_asyncio.fixture(scope="function")
-async def base_client() -> AsyncGenerator[AsyncClient, None]:
+async def base_client() -> AsyncIterator[AsyncClient]:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-    ) as ac:
-        yield ac
+    ) as test_client:
+        yield test_client
 
 
-@pytest_asyncio.fixture(scope="function")
-async def client(
-    base_client: AsyncClient,
-    db_engine: AsyncEngine,
-    redis_client: Redis,
-) -> AsyncGenerator[AsyncClient, None]:
-    old_overrides = app.dependency_overrides.copy()
-    
+@pytest_asyncio.fixture
+async def db_engine(
+    safe_integration_settings: Settings,
+) -> AsyncIterator[AsyncEngine]:
+    engine = create_async_engine(
+        safe_integration_settings.database_url,
+        poolclass=NullPool,
+    )
     try:
-        async def override_get_db():
-            async_session = async_sessionmaker(
-                bind=db_engine,
-                class_=AsyncSession,
-                expire_on_commit=False
-            )
-            async with async_session() as session:
-                try:
-                    yield session
-                finally:
-                    try:
-                        await session.rollback()
-                    except Exception:
-                        pass
-                    finally:
-                        await session.close()
-
-        async def override_get_redis():
-            yield redis_client
-            
-            
-        app.dependency_overrides[get_db] = override_get_db
-        app.dependency_overrides[get_redis] = override_get_redis
-        yield base_client
+        yield engine
     finally:
-        app.dependency_overrides = old_overrides
+        await engine.dispose()
 
 
-
-async def create_test_user(
-    db: AsyncSession, 
-    auth_id: str = "testuser", 
-    password: str = "test123",
-) -> tuple[User, AuthUser]:
-    """create test user"""
-    user = await db.run_sync(lambda session:
-        UserFactory.build(name=auth_id)
+@pytest_asyncio.fixture
+async def db_session(
+    db_engine: AsyncEngine,
+    migrated_database: None,
+) -> AsyncIterator[AsyncSession]:
+    session_maker = async_sessionmaker(
+        bind=db_engine,
+        expire_on_commit=False,
     )
-    db.add(user)
-    await db.flush()
-    
-    auth_user = await db.run_sync(lambda session:
-        AuthUserFactory.build(
-            user_id=user.id,
-            auth_id=auth_id,
-            auth_type=1,
-            credential=pwd_context.hash(password)
-        )
+    async with db_engine.begin() as connection:
+        await connection.execute(delete(AuthUser))
+        await connection.execute(delete(User))
+
+    async with session_maker() as session:
+        try:
+            yield session
+        finally:
+            await session.rollback()
+
+    async with db_engine.begin() as connection:
+        await connection.execute(delete(AuthUser))
+        await connection.execute(delete(User))
+
+
+@pytest_asyncio.fixture
+async def redis_client(
+    safe_integration_settings: Settings,
+) -> AsyncIterator[Redis]:
+    client = Redis(
+        host=safe_integration_settings.REDIS_HOST,
+        port=safe_integration_settings.REDIS_PORT,
+        password=(
+            safe_integration_settings.REDIS_PASSWORD.get_secret_value() or None
+        ),
+        db=safe_integration_settings.REDIS_DB,
+        decode_responses=True,
     )
-    db.add(auth_user)
-    
-    await db.commit()
-    return user, auth_user
+    await client.ping()
+    await client.flushdb()
+    try:
+        yield client
+    finally:
+        await client.flushdb()
+        await client.aclose()
 
 
-async def login_test_user(client: AsyncClient, auth_id: str = "testuser", password: str = "test123") -> str:
-    """login test user and return token"""
-    response = await client.post(
-        "/api/v1/auth/token",
-        data={"username": auth_id, "password": password}
+@pytest_asyncio.fixture
+async def test_app(
+    db_session: AsyncSession,
+    redis_client: Redis,
+) -> AsyncIterator[FastAPI]:
+    app_under_test = create_app()
+
+    async def override_db() -> AsyncIterator[AsyncSession]:
+        try:
+            yield db_session
+            await db_session.commit()
+        except Exception:
+            await db_session.rollback()
+            raise
+
+    async def override_redis() -> AsyncIterator[Redis]:
+        yield redis_client
+
+    app_under_test.dependency_overrides[get_db] = override_db
+    app_under_test.dependency_overrides[get_redis] = override_redis
+    try:
+        yield app_under_test
+    finally:
+        app_under_test.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def unauth_client(test_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://test",
+    ) as test_client:
+        yield test_client
+
+
+@pytest_asyncio.fixture
+async def auth_user(db_session: AsyncSession) -> User:
+    user = await create_internal_user(
+        db_session,
+        auth_id=TEST_USERNAME,
+        name="Scaffold Admin",
+        password=TEST_PASSWORD,
+    )
+    await db_session.commit()
+    return user
+
+
+@pytest_asyncio.fixture
+async def client(
+    unauth_client: AsyncClient,
+    auth_user: User,
+) -> AsyncIterator[AsyncClient]:
+    response = await unauth_client.post(
+        "/api/auth/token",
+        data={"username": TEST_USERNAME, "password": TEST_PASSWORD},
     )
     assert response.status_code == 200
-    return response.json()["access_token"]
+    unauth_client.headers["Authorization"] = (
+        f"Bearer {response.json()['access_token']}"
+    )
+    try:
+        yield unauth_client
+    finally:
+        unauth_client.headers.pop("Authorization", None)
+
+
+@pytest_asyncio.fixture
+async def live_app(
+    db_session: AsyncSession,
+    redis_client: Redis,
+) -> AsyncIterator[FastAPI]:
+    # Exercises the production get_db / get_redis wiring with no overrides.
+    # Dispose between tests so QueuePool connections are not reused across
+    # pytest-asyncio function-scoped event loops.
+    await close_database()
+    await close_redis()
+    try:
+        yield create_app()
+    finally:
+        await close_database()
+        await close_redis()
+
+
+@pytest_asyncio.fixture
+async def live_client(
+    live_app: FastAPI,
+    auth_user: User,
+) -> AsyncIterator[AsyncClient]:
+    async with AsyncClient(
+        transport=ASGITransport(app=live_app),
+        base_url="http://test",
+    ) as test_client:
+        response = await test_client.post(
+            "/api/auth/token",
+            data={"username": TEST_USERNAME, "password": TEST_PASSWORD},
+        )
+        assert response.status_code == 200
+        test_client.headers["Authorization"] = (
+            f"Bearer {response.json()['access_token']}"
+        )
+        yield test_client

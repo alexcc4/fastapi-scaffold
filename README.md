@@ -1,154 +1,144 @@
-# FastAPI REST Service
+# FastAPI Scaffold
 
-A minimalist yet production-ready FastAPI backend service with SQLAlchemy and Redis integration, featuring a complete JWT-based authentication system.
+A minimal template for internal FastAPI services with asynchronous MySQL,
+Redis, Alembic, internal account authentication, request observability, and
+Pytest.
 
-## Features
+## Requirements
 
-- JWT + Redis dual verification authentication system
-- Async MySQL database operations (SQLAlchemy)
-- Redis caching
-- CLI tools for user management
-- Automated testing with pytest
-- Alembic database migrations
-- Comprehensive exception handling
-- Production-grade logging system
-
-## Tech Stack
-
-- Python 3.12+
-- FastAPI
-- MySQL 8.0+
-- SQLAlchemy (Async)
+- Python >= 3.12
+- MySQL 8.x
 - Redis
-- Alembic
-- pytest
-- Typer (CLI)
+- [uv](https://docs.astral.sh/uv/)
 
-## Getting Started
+## Create a Project
 
-### Prerequisites
+After creating a repository from this template, update the project name in
+`pyproject.toml`, the FastAPI title, and the example database names.
 
-- Python 3.12+
-- MySQL 8.0+
-- Redis
-
-### Installation
-
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-   > Note: `uv pip install -r requirements.txt` is faster
-3. Set up environment variables: `cp .env.example .env` and fill in the required values
-4. Run database migrations: `alembic upgrade head`
-5. Create initial user: `python app/cli.py create-user <username> --password <password>`
-6. Start the development server: `uvicorn app.main:app --reload`
-
-### Environment Configuration
-
-Configure the following variables in your `.env` file:
-
-```env
-# Database
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=your_database_name
-
-# Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_DB=0
-
-# JWT
-JWT_SECRET_KEY=your_secret_key_here
-JWT_ALGORITHM=HS256
-JWT_EXPIRE_DAYS=30
-
-# Application
-DEBUG=True
-SECRET_KEY=your_app_secret_key
+```bash
+uv sync --group dev
+cp .env.example .env.development
 ```
 
-### Testing
+Update `.env.development` for your local environment, then create the
+development database:
 
-> Note: Tests use a real database with test-specific configuration to ensure functionality
+```bash
+mysql -u root -p -e \
+  "CREATE DATABASE IF NOT EXISTS fastapi_scaffold CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
 
-Run tests: `pytest` or `./run_tests.sh`
+## Start the Application
+
+```bash
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload --no-access-log
+```
+
+After startup, the following endpoints are available:
+
+- Liveness probe: `http://localhost:8000/ping`
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+- OpenAPI schema: `http://localhost:8000/openapi.json`
+
+`/ping` indicates only that the application can respond. It does not check
+MySQL or Redis.
+
+Application middleware adds `X-Request-ID` and `Server-Timing` to HTTP
+responses and writes one access log entry without the query string, request
+body, or authentication information. Disable Uvicorn's access log to avoid
+duplicate entries.
+
+## Internal Accounts
+
+Create the first internal account:
+
+```bash
+uv run python -m app.cli create-user scaffold.admin --name "Scaffold Admin"
+```
+
+The password is entered through a hidden interactive prompt. Account
+maintenance commands:
+
+```bash
+uv run python -m app.cli reset-password scaffold.admin
+uv run python -m app.cli disable-user scaffold.admin
+uv run python -m app.cli enable-user scaffold.admin
+uv run python -m app.cli inspect-session
+```
+
+`inspect-session` also reads the token from a hidden prompt and prints only its
+digest fingerprint, user ID, versions, and remaining TTL. Redis keys use the
+token's SHA-256 digest; the raw token is never stored or printed.
+
+The login endpoint is `POST /api/auth/token` and uses an OAuth2 password form.
+Subsequent requests use `Authorization: Bearer <token>` to access
+`/api/auth/me` and `/api/auth/logout`.
+
+## Testing
+
+Tests connect to real MySQL and Redis instances by default:
+
+```bash
+cp .env.test.example .env.test
+mysql -u root -p -e \
+  "CREATE DATABASE IF NOT EXISTS test_fastapi_scaffold CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+uv run pytest
+```
+
+The test database name must start with `test_`. Redis must use a disposable,
+nonzero database; tests run `FLUSHDB` before and after every Redis test. The
+complete suite uses Alembic to downgrade the test database to base and then
+upgrade it to head, so the database must be dedicated and safe to clear.
+
+For fast feedback without infrastructure-dependent tests:
+
+```bash
+uv run pytest -m "not integration"
+```
+
+Application configuration is still loaded during test collection, so fast
+tests also require a parseable `.env.test`. They do not connect to the
+configured MySQL or Redis instances.
+
+## Database Migrations
+
+After adding a model, import it in `app/models/__init__.py` before generating a
+migration:
+
+```bash
+uv run alembic revision --autogenerate -m "describe change in English"
+uv run alembic upgrade head
+uv run alembic downgrade -1
+```
+
+## Slow Queries
+
+The SQLAlchemy engine logs successful statements that exceed
+`DB_SLOW_QUERY_THRESHOLD_SECONDS`. By default, the log includes only duration,
+operation type, an SQL fingerprint, and request context. It does not include
+SQL text or parameters.
+
+## Production Startup
+
+Gunicorn uses the standalone `uvicorn-worker`. The application access
+middleware is the only source of request logs:
+
+```bash
+PORT=8000 WEB_CONCURRENCY=2 LOG_LEVEL=info \
+  uv run gunicorn -c deploy/gunicorn_conf.py app.main:app
+```
+
+Gunicorn writes its error log to stderr and the application writes logs to
+stdout.
 
 ## API Documentation
 
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-## Authentication
-
-This service uses JWT tokens with Redis-based token management for secure authentication.
-
-### Login Process
-
-1. **OAuth2 Standard Endpoint**: `POST /api/v1/auth/token`
-   - Standard OAuth2 password flow
-   - Returns access token and token type
-
-2. **Custom Login Endpoint**: `POST /api/v1/auth/login`
-   - Custom login with additional user information
-   - Returns access token and user details
-
-### Protected Endpoints
-
-Include the JWT token in the Authorization header:
-
-```bash
-Authorization: Bearer <your_jwt_token>
-```
-
-### Example Usage
-
-```bash
-# Login and get token
-curl -X POST "http://localhost:8000/api/v1/auth/token" \
-     -H "Content-Type: application/x-www-form-urlencoded" \
-     -d "username=your_username&password=your_password"
-
-# Use token to access protected endpoints
-curl -X GET "http://localhost:8000/api/v1/auth/me" \
-     -H "Authorization: Bearer <your_jwt_token>"
-
-# Logout
-curl -X POST "http://localhost:8000/api/v1/auth/logout" \
-     -H "Authorization: Bearer <your_jwt_token>"
-```
-
-## CLI Tools
-
-The project includes CLI tools for user management:
-
-```bash
-# Create a new user
-python app/cli.py create-user <username> --password <password> --name "Display Name"
-
-# Get help
-python app/cli.py --help
-```
-
-## Project Structure
-
-```bash
-
-app/
-├── api/v1/          # API routes
-├── cli/             # CLI tools
-├── core/            # Core functionality (auth, config, deps)
-├── db/              # Database and Redis connections
-├── middleware/      # FastAPI middleware
-├── models/          # SQLAlchemy models
-├── schemas/         # Pydantic schemas
-└── services/        # Business logic services
-```
-
-## References
-
-- [uv](https://docs.astral.sh/uv/getting-started/)
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [SQLAlchemy](https://www.sqlalchemy.org/)
-- [FastAPI Best Practices](https://github.com/zhanymkanov/fastapi-best-practices)
+`/docs`, `/redoc`, and `/openapi.json` are the technical contract for fields,
+types, required values, and status codes, as well as entry points for online
+debugging. See [`wikis/README.md`](wikis/README.md) for business documentation.
+Core frontend integration endpoints may include complete requests, successful
+responses, error statuses, and representative JSON examples in the Wiki, as
+shown in [`wikis/Auth.md`](wikis/Auth.md).

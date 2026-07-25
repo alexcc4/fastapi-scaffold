@@ -1,34 +1,47 @@
 from datetime import datetime
 
-from sqlalchemy import String, BigInteger, SmallInteger, DateTime, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.mysql import JSON
 
-from app.models.base import Base
-
-
-class User(Base):
-    __tablename__ = "user"
-    
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    avatar_url: Mapped[str] = mapped_column(String(255), nullable=True)
-    
-    status: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
-    is_verified: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
-    deleted_at: Mapped[datetime] = mapped_column(DateTime, nullable=True, index=True)
+from app.models.base import Base, BigIntIdMixin, TimestampMixin
 
 
-class AuthUser(Base):
-    __tablename__ = "auth_user"
-    
-    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-    auth_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    auth_type: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    credential: Mapped[str] = mapped_column(String(255), nullable=True)
+class User(BigIntIdMixin, TimestampMixin, Base):
+    __tablename__ = "users"
 
-    auth_data: Mapped[dict] = mapped_column(JSON, nullable=True, comment="additional payload")
-    last_login_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint("auth_id", "auth_type", name="uix_auth_id_auth_type"),
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    session_version: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+        server_default=text("1"),
+        nullable=False,
     )
+
+
+class AuthUser(BigIntIdMixin, TimestampMixin, Base):
+    __tablename__ = "auth_users"
+    __table_args__ = (
+        UniqueConstraint(
+            "auth_id",
+            name="uq_auth_users_auth_id",
+        ),
+        UniqueConstraint(
+            "user_id",
+            name="uq_auth_users_user_id",
+        ),
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+    )
+    auth_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential: Mapped[str] = mapped_column(String(60), nullable=False)

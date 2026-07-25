@@ -1,42 +1,59 @@
 import os
-from typing import Optional 
+from functools import lru_cache
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
-    DB_USER: str
-    DB_PASSWORD: str
+    APP_ENV: str = "development"
+    DEBUG: bool = False
+    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    LOG_LEVEL: str = "info"
+
     DB_HOST: str
-    DB_PORT: int
+    DB_PORT: int = 3306
+    DB_USER: str
+    DB_PASSWORD: SecretStr
     DB_NAME: str
-    
-    DEBUG: Optional[bool] = True
-    SECRET_KEY: str = "your_secret_key"
-    
-    REDIS_HOST: Optional[str] = None
-    REDIS_PORT: Optional[int] = None
-    REDIS_DB: Optional[int] = None
 
-    JWT_SECRET_KEY: str = "your_secret_key"
-    JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_DAYS: int = 30  
+    REDIS_HOST: str
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: SecretStr
+    REDIS_DB: int = 0
 
-    @property
-    def DATABASE_URL(self) -> str:
-        if os.getenv("TESTING"):
-            return "mysql+aiomysql://root:root@localhost:3306/test_db?charset=utf8mb4"
-        return f"mysql+aiomysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
+    AUTH_SESSION_TTL_SECONDS: int = Field(default=604800, ge=1)
 
-    @property
-    def REDIS_URL(self) -> str:
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+    DB_SLOW_QUERY_THRESHOLD_SECONDS: float = Field(default=2.0, ge=0)
 
     model_config = SettingsConfigDict(
-        env_file=f".env.{os.getenv('APP_ENV', 'local')}",
-        case_sensitive=True,
-        extra='ignore'
+        env_file=f".env.{os.getenv('APP_ENV', 'development')}",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.ALLOWED_ORIGINS.split(",")
+            if origin.strip()
+        ]
 
-settings = Settings() 
+    @property
+    def database_url(self) -> URL:
+        return URL.create(
+            drivername="mysql+aiomysql",
+            username=self.DB_USER,
+            password=self.DB_PASSWORD.get_secret_value(),
+            host=self.DB_HOST,
+            port=self.DB_PORT,
+            database=self.DB_NAME,
+            query={"charset": "utf8mb4"},
+        )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

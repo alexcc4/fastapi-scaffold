@@ -24,11 +24,11 @@ from app.db.mysql import close_database, get_db
 from app.db.redis import close_redis, get_redis
 from app.main import app, create_app
 from app.models import AuthUser, User
-from app.services.auth import create_internal_user
+from tests.factories import TEST_LOGIN_PASSWORD, build_internal_user
 
 
 TEST_USERNAME = "scaffold.admin"
-TEST_PASSWORD = "test-password-123"
+TEST_PASSWORD = TEST_LOGIN_PASSWORD
 
 
 @pytest.fixture(scope="session")
@@ -162,12 +162,13 @@ async def unauth_client(test_app: FastAPI) -> AsyncIterator[AsyncClient]:
 
 @pytest_asyncio.fixture
 async def auth_user(db_session: AsyncSession) -> User:
-    user = await create_internal_user(
+    user = await build_internal_user(
         db_session,
         auth_id=TEST_USERNAME,
         name="Scaffold Admin",
-        password=TEST_PASSWORD,
+        login=True,
     )
+    # Production-wired clients use an independent database Session.
     await db_session.commit()
     return user
 

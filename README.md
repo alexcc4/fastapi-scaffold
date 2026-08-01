@@ -136,9 +136,12 @@ stdout.
 
 ## API Documentation
 
-`/docs`, `/redoc`, and `/openapi.json` are the technical contract for fields,
-types, required values, and status codes, as well as entry points for online
-debugging. See [`wikis/README.md`](wikis/README.md) for business documentation.
-Core frontend integration endpoints may include complete requests, successful
-responses, error statuses, and representative JSON examples in the Wiki, as
-shown in [`wikis/Auth.md`](wikis/Auth.md).
+The Wiki is the human-readable integration contract. `/docs`, `/redoc`, and
+`/openapi.json` are the exact machine-readable contract and online debugging
+entry points. Both surfaces cover the same public HTTP operations.
+
+See [`wikis/README.md`](wikis/README.md) for the business documentation index.
+It currently covers the three authentication operations and `GET /ping`. When
+adding a public operation, use
+[`wikis/API_TEMPLATE.md`](wikis/API_TEMPLATE.md) to document its request,
+successful response, stable errors, and state side effects.

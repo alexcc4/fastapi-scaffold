@@ -1,43 +1,117 @@
 # Resource Name
 
-This document explains how frontend and product consumers use the resource.
-The live `/docs` and `/openapi.json` endpoints are authoritative for fields,
-types, required values, and status codes.
+This document explains how frontend clients, internal callers, and product
+stakeholders use the resource. The Wiki is the human-readable integration
+contract and OpenAPI is the exact machine-readable contract. This document
+must cover every public OpenAPI operation belonging to the resource.
 
-## Purpose
+Copy the complete structure below for each public operation. Give every
+operation its own level-two section with a business-action title, for example
+`## Create a Resource`. The first two non-empty lines after the title must be
+the URL and Method metadata shown below. Use an ASCII colon, inline code, and
+an uppercase method. Remove instructions that do not apply and never combine
+multiple operations into one operation section.
 
-Explain the business problem this resource solves and the situations in which
-the page uses it.
+## Resource Purpose
 
-## Endpoints
+Explain the business problem solved by this resource and when callers use it.
 
-- `METHOD /api/resource`: Describe the operation's purpose in one sentence.
-- For core frontend integration endpoints, include the content type, headers,
-  complete request, successful response, and error statuses. For ordinary
-  endpoints, retain only the information needed to understand the business
-  behavior.
+## Operation Name
 
-## Business Rules
+- URL: `/path`
+- Method: `METHOD`
 
-- Document only rules that are not evident from field names and types.
-- Explain important state changes, resource relationships, and authorization
-  prerequisites.
+### Purpose
 
-## Frontend Considerations
+Explain what the operation does, who may call it, and what callers may rely on
+after it succeeds.
 
-- Explain loading, empty, unavailable, and special interaction states.
-- State how the frontend determines success, failure, and state changes.
+### Authentication and Headers
 
-## Error Handling
+- Authentication: state whether the operation uses a bearer token or none.
+- `Content-Type`: state the actual type when there is a request body; otherwise
+  write `not applicable`.
+- Other headers: list required or returned headers; write `none` when there are
+  none.
 
-- List business errors that require dedicated frontend handling and describe
-  the corresponding user message.
-- Refer directly to `/docs` for generic validation errors.
+Sensitive values in operation example blocks use this closed allowlist:
 
-## Example (Optional)
+- JSON or form values: `<password>`, `<new-password>`, `<opaque-token>`
+- Usernames: values matching `[a-z0-9._-]+\.example`
 
-Core integration endpoints may maintain representative JSON synchronized with
-the response model and tests. For other endpoints, include one minimal example
-only when it clarifies business semantics. Never include fixed test
-credentials, real tokens, or secrets, and do not create separate example
-files.
+No other secret field may contain a non-placeholder value in an operation
+example block.
+
+### Path and Query Parameters
+
+For every parameter, document its name, type, whether it is required, and its
+business meaning. Write `None` when there are no path or query parameters.
+
+### Request
+
+When OpenAPI declares a request body, document each field, its type, whether it
+is required, and any constraint that is not obvious from its type. Include a
+JSON or form request-body example. When there is no request body, include the
+following marker and remove the empty example:
+
+**Request body: none.**
+
+#### Request Body Example
+
+JSON request body:
+
+```json
+{
+  "username": "user.example",
+  "password": "<password>"
+}
+```
+
+Use the actual encoded-field form for a form request:
+
+```text
+username=user.example&password=<password>
+```
+
+Add an `#### Integration Example` only for service-to-service operations where
+a complete request has genuine integration value. Do not duplicate curl for
+ordinary frontend APIs.
+
+### Successful Response
+
+- Status: `2xx`.
+- Meaning: explain what the success status guarantees.
+
+Explain complex response fields and fields whose meaning is not obvious from
+their names. Do not repeat self-explanatory fields.
+
+#### Successful Response Example
+
+Provide the complete response body synchronized with the current response
+model and tests. Never omit fields with an ellipsis. When there is no response
+body, include:
+
+**Response body: none.**
+
+```json
+{
+  "id": 1,
+  "username": "user.example"
+}
+```
+
+### Stable Business Errors
+
+List the business errors that callers must handle consistently. Include the
+HTTP status, exact `detail`, and trigger for each error. Generic request
+validation errors may link to OpenAPI instead of copying every framework-
+generated variant.
+
+| Status | `detail` | Trigger |
+| --- | --- | --- |
+| `4xx` | `Exact stable detail` | Explain the triggering condition |
+
+### State Side Effects
+
+Explain session invalidation, resource-state changes, and when they take
+effect. Write `None` for a read-only operation with no side effects.

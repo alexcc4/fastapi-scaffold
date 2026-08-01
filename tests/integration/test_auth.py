@@ -18,7 +18,6 @@ from app.services.auth import (
     reset_internal_password,
 )
 from tests.conftest import TEST_PASSWORD, TEST_USERNAME
-from tests.factories import AuthUserFactory, UserFactory
 
 
 pytestmark = pytest.mark.integration
@@ -273,18 +272,3 @@ async def test_duplicate_internal_account_is_rejected(
             name="Duplicate Admin",
             password=TEST_PASSWORD,
         )
-
-
-async def test_factories_persist_with_async_session(
-    db_session: AsyncSession,
-) -> None:
-    user = UserFactory.build(name="Factory User")
-    db_session.add(user)
-    await db_session.flush()
-    auth_user = AuthUserFactory.build(user_id=user.id)
-    db_session.add(auth_user)
-    await db_session.flush()
-
-    assert user.id is not None
-    assert auth_user.id is not None
-    assert auth_user.user_id == user.id

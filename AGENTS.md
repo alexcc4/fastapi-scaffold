@@ -15,6 +15,9 @@ belongs in `wikis/`.
 - Run every Python command through `uv run` and manage dependencies with
   `uv add`.
 - Do not pin dependencies with exact `==` versions. Commit `uv.lock`.
+- Prefer Typer for user-facing and operations-facing Python CLIs. Keep
+  multi-command entry points as command groups, and cover `--help`, exit codes,
+  and sensitive input with `CliRunner`.
 
 ## Layering
 
@@ -78,11 +81,25 @@ one transaction.
   internal username/password accounts, opaque tokens, and account
   enable/disable operations. It does not include RBAC, SSO, refresh tokens, or
   an application-specific user system.
-- OpenAPI is the exact machine-readable API contract. Core frontend integration
-  endpoints may document complete requests, successful responses, error
-  statuses, and representative JSON examples in `wikis/`.
-- Keep Wiki examples synchronized with the current response models and tests.
-  Never include fixed test credentials, real tokens, or secrets.
+- The Wiki is the human-readable integration contract and OpenAPI is the exact
+  machine-readable contract. They must cover the same public HTTP operations.
+  Give each operation its own level-two section with a business-action title,
+  followed by `- URL:` and `- Method:` metadata with inline-code values and an
+  uppercase method. Follow `wikis/API_TEMPLATE.md` for the complete contract.
+- Every operation section must describe request fields. When OpenAPI declares
+  a request body, include a JSON or form example; otherwise write
+  `Request body: none`. Document the success status and a complete response
+  example; when there is no body, write `Response body: none`. Add a complete
+  request only for service-to-service operations where it has genuine
+  integration value; do not duplicate curl for ordinary frontend APIs.
+- Sensitive values in operation example blocks may only use `<password>`,
+  `<new-password>`, and `<opaque-token>`. Usernames must match
+  `[a-z0-9._-]+\.example`. Never include fixed test credentials, real tokens,
+  or secrets.
+- The automated documentation gate must compare Wiki operations with the
+  current OpenAPI document and validate operation metadata, request and
+  response examples, and sensitive placeholders. Response examples must stay
+  synchronized with their response models.
 - `wikis/README.md` is the business documentation index. Update it whenever a
   new topic document is added.
 
@@ -96,8 +113,19 @@ one transaction.
   `FLUSHDB` before and after each test.
 - Tests must fail when infrastructure connections fail. Never skip them
   automatically.
-- For fast feedback, run `uv run pytest -m "not integration"`, but this does
-  not replace the complete test suite.
+- Prefer high-level asynchronous Builders from `tests/factories.py` for test
+  arrangement. Exercise behavior through public HTTP or an explicit service
+  seam. When account creation, CLI transactions, duplicate accounts, or other
+  production behavior is part of the test narrative, continue to call the
+  corresponding production entry point.
+- Factories remain build-only. Builders call only `add()` and `flush()` and do
+  not commit by default.
+- Test setup may commit only when using an independent Session or verifying
+  cross-transaction visibility. Explain the reason at the call site.
+- Use raw SQL only for fault injection or independent persistence and
+  transaction verification, not for ordinary test-data setup.
+- `uv run pytest -m "not integration"` provides fast feedback but does not
+  replace the complete test suite.
 
 Before committing, run at least:
 
